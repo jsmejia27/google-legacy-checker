@@ -3,23 +3,84 @@ import './App.css';
 
 function App() {
   const [url, setUrl] = useState('');
-  const [crawlDepth, setCrawlDepth] = useState(1);
-  const [scanSummary, setScanSummary] = useState(null);
+  const [crawlDepth, setCrawlDepth] = useState(1); // Keep crawlDepth state if needed later
+  const [scanResults, setScanResults] = useState(null); // Renamed state for clarity
   const [loading, setLoading] = useState(false);
-  const [reports, setReports] = useState([]);
+  const [error, setError] = useState(null);
   const [email, setEmail] = useState('');
-
-  const handleScan = () => {
+  const handleScan = async () => {
     setLoading(true);
-    // Simulate scan API call
-    setTimeout(() => {
-      setScanSummary({
-        statusCode: 200,
-        serverType: 'Apache',
-        issues: ['SQL Injection vulnerability']
-      });
+    setError(null);
+    setScanResults(null); // Clear previous results
+
+    if (!url) {
+      setError('Please enter a URL.');
       setLoading(false);
-    }, 3000);
+      return;
+    }
+
+    let hostname;
+    try {
+      // Ensure URL has a protocol for URL constructor
+      const fullUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `https://${url}`;
+      hostname = new URL(fullUrl).hostname;
+    } catch (e) {
+      setError('Invalid URL format.');
+      setLoading(false);
+      return;
+    }
+
+    const results = {
+      dns: null,
+      ipInfo: null,
+      robots: null,
+      whois: 'Whois lookup not implemented.', // Placeholder
+      subdomains: 'Subdomain enumeration not implemented.', // Placeholder
+    };
+
+    try {
+      // 1. DNS Lookup (A record via Cloudflare DoH)
+      const dnsResponse = await fetch(`https://cloudflare-dns.com/dns-query?name=${hostname}&type=A`, {
+        headers: { 'accept': 'application/dns-json' }
+      });
+      if (!dnsResponse.ok) throw new Error(`DNS query failed: ${dnsResponse.statusText}`);
+      const dnsData = await dnsResponse.json();
+      results.dns = dnsData.Answer ? dnsData.Answer.map(a => a.data) : 'No A records found.';
+
+      // 2. IP Info (using the first IP from DNS)
+      if (Array.isArray(results.dns) && results.dns.length > 0) {
+        const ip = results.dns[0];
+        const ipResponse = await fetch(`http://ip-api.com/json/${ip}`);
+        if (!ipResponse.ok) throw new Error(`IP info query failed: ${ipResponse.statusText}`);
+        results.ipInfo = await ipResponse.json();
+      } else {
+        results.ipInfo = 'Could not get IP for info lookup.';
+      }
+
+      // 3. Robots.txt Discovery
+      try {
+        const robotsResponse = await fetch(`${url.startsWith('http') ? '' : 'https://'}${hostname}/robots.txt`);
+        if (robotsResponse.ok) {
+          results.robots = await robotsResponse.text();
+        } else if (robotsResponse.status === 404) {
+          results.robots = 'robots.txt not found (404).';
+        } else {
+          results.robots = `Error fetching robots.txt: ${robotsResponse.statusText}`;
+        }
+      } catch (robotsError) {
+        results.robots = `Error fetching robots.txt: ${robotsError.message}`;
+      }
+
+      setScanResults(results);
+
+    } catch (err) {
+      console.error("Scan error:", err);
+      setError(`Scan failed: ${err.message}`);
+      // Keep partial results if any
+      setScanResults(results);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleDownloadReport = () => {
@@ -59,12 +120,30 @@ function App() {
           >
             {loading ? 'Scanning...' : 'Start Scan'}
           </button>
-          {scanSummary && (
-            <div className="mt-2">
-              <h3 className="font-bold">Scan Summary:</h3>
-              <p>Status Code: {scanSummary.statusCode}</p>
-              <p>Server Type: {scanSummary.serverType}</p>
-              <p>Issues: {scanSummary.issues.join(', ')}</p>
+          {error && <p className="text-red-500 mt-2">{error}</p>}
+          {scanResults && (
+            <div className="mt-4 p-4 border rounded bg-gray-50 text-sm">
+              <h3 className="font-bold text-lg mb-2">Scan Results:</h3>
+              <div>
+                <h4 className="font-semibold">DNS (A Records):</h4>
+                <pre className="whitespace-pre-wrap bg-gray-100 p-2 rounded">{JSON.stringify(scanResults.dns, null, 2)}</pre>
+              </div>
+              <div className="mt-2">
+                <h4 className="font-semibold">IP Info:</h4>
+                <pre className="whitespace-pre-wrap bg-gray-100 p-2 rounded">{JSON.stringify(scanResults.ipInfo, null, 2)}</pre>
+              </div>
+               <div className="mt-2">
+                 <h4 className="font-semibold">Whois:</h4>
+                 <p className="text-gray-600">{scanResults.whois}</p>
+               </div>
+               <div className="mt-2">
+                 <h4 className="font-semibold">Subdomains:</h4>
+                 <p className="text-gray-600">{scanResults.subdomains}</p>
+               </div>
+              <div className="mt-2">
+                <h4 className="font-semibold">Robots.txt:</h4>
+                <pre className="whitespace-pre-wrap bg-gray-100 p-2 rounded max-h-40 overflow-auto">{scanResults.robots || 'Not found or error fetching.'}</pre>
+              </div>
             </div>
           )}
         </div>
@@ -79,20 +158,19 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              {reports.map((report, index) => (
-                <tr key={index}>
-                  <td className="border px-4 py-2">{report.url}</td>
-                  <td className="border px-4 py-2">{report.status}</td>
-                  <td className="border px-4 py-2">
-                    <button
-                      onClick={handleDownloadReport}
-                      className="p-2 bg-green-500 text-white rounded hover:bg-green-700"
-                    >
-                      Download PDF
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {/* Example report data */}
+              <tr>
+                <td className="border px-4 py-2">https://example.com</td>
+                <td className="border px-4 py-2">Completed</td>
+                <td className="border px-4 py-2">
+                  <button
+                    onClick={handleDownloadReport}
+                    className="p-2 bg-green-500 text-white rounded hover:bg-green-700"
+                  >
+                    Download PDF
+                  </button>
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
